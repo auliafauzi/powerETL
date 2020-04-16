@@ -12,6 +12,7 @@ import time
 import os
 from getpass import getpass
 import decimal
+import json
 
 
 today = date.today()
@@ -48,16 +49,20 @@ SourceList[3] = 'Remote CSV via SFTP'
 SourceList[4] = 'Remote XLSX via SFTP'
 SourceList[5] = 'Manual input'
 
-def defineTargetDB():
+def defineTargetDB(select):
 	global targethostname, targetdatabase, targetusername, targetpassword, targettable
 	os.system('clear')
 	print('\nConfigure Target Database....\n')
 	time.sleep(1)
-	targethostname = input('\nInsert target Host:\n')
-	targetdatabase = input('\nInsert target database name:\n')
-	targetusername = input('\nInsert username:\n')
-	targetpassword = getpass('\nInsert password:\n')
-	targettable = input('\nInsert target table name \n(format : schema.tablename)\n(example : ods.oc_jurnal):\n')
+	if select == 1 or select == 2 :
+		targethostname = input('\nInsert target Host:\n')
+		targetdatabase = input('\nInsert target database name:\n')
+		targetusername = input('\nInsert username:\n')
+		targetpassword = getpass('\nInsert password:\n')
+	if select == 1 or select == 3 :
+		targettable = input('\nInsert target table name \n(format : schema.tablename)\n(example : ods.oc_jurnal):\n')
+	else : 
+		pass
 
 def mainScreen():
 	print('//////////////////////////////////')
@@ -391,22 +396,6 @@ def excelPushToDB(targethostname, targetdatabase, targetusername, targetpassword
 			conn.close()
 	return result, pushToDBError
 
-def readExcel(file) : 
-	wb = xlrd.open_workbook(file) 
-	sheet = wb.sheet_by_index(0) 
-	sheet.cell_value(0, 0) 
-
-	row = []
-	data = []
-	for i in range(sheet.nrows):
-		for j in range(len(sheet.row_values(i))) :
-			try :
-				value = str(decimal.Decimal(float(sheet.row_values(i)[j])))
-				row.append(value)
-			except :
-				row.append(sheet.row_values(i)[j])
-		data.append(row) 
-	return data
 
 def getFromSFTP(sourcehostname, sourceport , sourceusername, sourcepassword, remoteFilePath, targetfile):
 	cnopts = pysftp.CnOpts()
@@ -481,20 +470,45 @@ def pushToDB(targethostname, targetdatabase, targetusername, targetpassword, tar
 			conn.close()
 	return result, pushToDBError
 
-def openCSV(targetfile, delim) :
+def readExcel(file) : 
+	wb = xlrd.open_workbook(file) 
+	sheet = wb.sheet_by_index(0) 
+	sheet.cell_value(0, 0) 
+
+	row = []
+	data = []
+	for i in range(sheet.nrows):
+		for j in range(len(sheet.row_values(i))) :
+			try :
+				value = str(decimal.Decimal(float(sheet.row_values(i)[j])))
+				row.append(value)
+			except :
+				row.append(sheet.row_values(i)[j])
+		data.append(row) 
+	return data
+
+def openCSV(targetfile) :
+	while True :
+		delim = input('\nSelect delimiter (, or ; or |)\n')
+		if delim in [',',';','|']:
+			break
+		else:
+			print('\nPlease insert the right value\n')
+			continue
 	file = csv.reader(open(targetfile, "r"), delimiter = delim)
-	return file
+	data = []
+	for row in file :
+		data.append(row)
+	return data
 
 # def transformJob(file) :
 
-
-def readColumn(targetfile):
-	file = csv.reader(open(targetfile, "r"), delimiter = ',')
+def readColumn(data):
 	col = []
 	tipe = []
 	ex = []
 	i = 0
-	for row in file :
+	for row in data :
 		if i == 0  :
 			for column in row :
 				# print(column)
@@ -511,11 +525,6 @@ def readColumn(targetfile):
 		else :
 			pass
 		i += 1 
-
-	# print("col", col)
-	# print("example", ex)
-	# print("type", tipe)
-	# print("len", len(col))
 	return col, ex, tipe
 
 def defineColumn(column, example):
@@ -591,14 +600,38 @@ def queryTable(targethostname, targetdatabase, targetusername, targetpassword, t
 
 
 def runSetConfiguration():
-	defineTargetDB()
+	defineTargetDB(2)
 	confName = input('\nSave Configuration to: \n')
-	cnf = open(confName,'w')
-	cnf.write('targethostname=%s\ntargetdatabase=%s\ntargetusername=%s\ntargetpassword=%s\ntargettable=%s\n' % (targethostname,targetdatabase,targetusername,targetpassword,targettable))
+	cnf = {}
+	cnf['targethostname'] = targethostname
+	cnf['targetdatabase'] = targetdatabase
+	cnf['targetusername'] = targetusername
+	cnf['targetpassword'] = targetpassword
+	with open(confName,'w+') as outfile :
+		json.dump(cnf,outfile)
 	print('Saving file...')
 	time.sleep(2)
 	print('Done')
 	time.sleep(2)
+
+def readConfiguration():
+	global targethostname, targetdatabase, targetusername, targetpassword
+	confName = input('\nLoad Configuration file in: \n')
+	with open(confName) as json_file:
+	    cnf = json.load(json_file)
+	    targethostname = cnf['targethostname']
+	    targetdatabase = cnf['targetdatabase']
+	    targetusername = cnf['targetusername'] 
+	    targetpassword = cnf['targetpassword']
+	    # print(targethostname + '\n' + targetdatabase + '\n' + targetusername + '\n' + targetpassword + '\n')
+
+def createTablefunc(data) :
+	column, example,_ = readColumn(data)
+	kv = defineColumn(column, example)
+	query = createTableQuery(column, kv, targettable)
+	result, queryCreateTableError = queryTable(targethostname, targetdatabase, targetusername, targetpassword,targettable, query, 'Create table')
+	return result, queryCreateTableError
+
 
 def runCreateNewTable():
 	print('\nPlease select the input data')
@@ -618,16 +651,8 @@ def runCreateNewTable():
 				print('Please insert the right value\n')
 				continue
 
-	if selectedSource == 1 :
-		defineTargetDB()
-		targetfile = input('\nInsert Path of targetfile:\n')
-		column, example,_ = readColumn(targetfile)
-		kv = defineColumn(column, example)
-		query = createTableQuery(column, kv, targettable)
-		result, queryCreateTableError = queryTable(targethostname, targetdatabase, targetusername, targetpassword,targettable, query, 'Create table')
-		print(result)
-	elif selectedSource == 3 :
-		defineTargetDB()
+	if selectedSource == 3 :
+		defineTargetDB(1)
 		while True:
 			try :
 				collen = int(input('\nHow many column will be made\n'))
@@ -639,6 +664,18 @@ def runCreateNewTable():
 		col, kv = createColumn(collen)
 		query = createTableQuery(col, kv, targettable)
 		result, queryCreateTableError = queryTable(targethostname, targetdatabase, targetusername, targetpassword,targettable, query, 'Create table')
+		print(result)
+
+	else :
+		defineTargetDB(1)
+		targetfile = input('\nInsert Path of targetfile:\n')
+		if selectedSource == 1 :
+			data = openCSV(targetfile)
+		elif selectedSource == 2 :
+			data = readExcel(targetfile)
+		else : 
+			pass
+		result, queryCreateTableError = createTablefunc(data)
 		print(result)
 
 def runInsertTable():
@@ -672,25 +709,24 @@ def runInsertTable():
 				print('\nPlease insert the right value(1 or 2)\n')
 				continue
 
-	if selectedSubMenu == 1 :
-		if selectedSource == 1 :
-			defineTargetDB()
-			targetfile = input('\nInsert Path of targetfile:\n')
-			while True :
-				delim = input('\nSelect delimiter (, or ; or |)\n')
-				if delim in [',',';','|']:
-					break
-				else:
-					print('\nPlease insert the right value\n')
-					continue
-			file = openCSV(targetfile, delim)
-			data = []
-			for row in file :
-				data.append(row)
-			TransformJob = defineTransformJob(data)
-			print('\nTransformJob: ', TransformJob)
-			result, error = pushToDB(targethostname, targetdatabase, targetusername, targetpassword, targetfile, data, TransformJob)
-			print('\nResult: ', result)
+	defineTargetDB(1)
+	targetfile = input('\nInsert Path of targetfile:\n')
+	if selectedSource == 1 :	
+		data = openCSV(targetfile)			
+	elif selectedSource == 2 :
+		data = readExcel(targetfile)
+	else :
+		pass
+	if selectedSubMenu == 2 :
+		result, queryCreateTableError = createTablefunc(data)
+		print(result)
+	else :
+		pass
+	TransformJob = defineTransformJob(data)
+	print('\nTransformJob: ', TransformJob)
+	result, error = pushToDB(targethostname, targetdatabase, targetusername, targetpassword, targetfile, data, TransformJob)
+	print('\nResult: ', result)
+
 
 
 
@@ -717,7 +753,7 @@ if __name__ == '__main__':
 			print('Please only input the number\n')
 			continue
 		else:
-			if selectedMenu in [1,2,3,4,5] :
+			if selectedMenu in [1,2,3,4,5,6] :
 				break
 			else :
 				print('Please insert the right value\n')
@@ -729,6 +765,8 @@ if __name__ == '__main__':
 		runInsertTable()
 	if selectedMenu == 5 :
 		runSetConfiguration()
+	if selectedMenu == 6 :
+		readConfiguration()
 
 
 
