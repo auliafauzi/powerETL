@@ -48,6 +48,9 @@ SourceList[2] = 'Local XLSX'
 SourceList[3] = 'Remote CSV via SFTP'
 SourceList[4] = 'Remote XLSX via SFTP'
 SourceList[5] = 'Manual input'
+TransformJob = {}
+delimiter = ''
+fileType = ''
 
 def defineTargetDB(select):
 	global targethostname, targetdatabase, targetusername, targetpassword, targettable
@@ -63,6 +66,25 @@ def defineTargetDB(select):
 		targettable = input('\nInsert target table name \n(format : schema.tablename)\n(example : ods.oc_jurnal):\n')
 	else : 
 		pass
+
+def defineSource() :
+	global sourcehostname, sourceusername, sourcepassword, sourceport, sourcelocation, sourcenamepatern
+	os.system('clear')
+	print('\nConfigure Source....\n')
+	time.sleep(1)
+	sourcehostname = input('\nInsert source Host:\n')
+	sourceport = input('\nInsert target Port:\n')
+	sourceusername = input('\nInsert Username:\n') 
+	sourcepassword = getpass('\nInsert password:\n')
+	sourcelocation = input('\nInsert source location:\n') 
+	sourcenamepatern = input('\nInsert source name pattern:\n')
+
+def defineCommon() :
+	global logfile, transformJob_List, userEmail, developerEmail
+	logfile = input('\nInsert source logfile name:\n')
+	userEmail = input('\nInsert user email address:\n')
+	developerEmail = input('\nInsert developer email address:\n')
+
 
 def mainScreen():
 	print('//////////////////////////////////')
@@ -118,7 +140,7 @@ def transformRemoveChar(n):
 	row[n] = ''.join(re.findall("\d+", row[n]))
 
 def transformJobList(n,func,row):
-	if func == 1 :
+	if func == 'int4' or func == 'int8' :
 		row[n] = ''.join(re.findall("\d+", row[n]))
 		return row
 	#['ddmmYYYY' , 'ddmmyy' , 'YYYYmmdd' , 'yymmdd' , 'dd-mm-YYYY', 'dd-mm-yy', 'YYYY-mm-dd' , 'yy-mm-dd' , 'dd/mm/YYYY' , 'dd/mm/yy' , 'YYYY/mm/dd' , 'yy/mm/dd'] 
@@ -162,17 +184,23 @@ def transformJobList(n,func,row):
 	elif func == 'HH.MM.SS' :
 		row[n] = datetime.strptime(row[n], '%H.%M.%S').strftime("%H:%M:%S")
 		return row
+
+	elif func == 'd-Mon-y H.M':
+		row[n] = datetime.strptime(row[n], '%d-%b-%y %H.%M').strftime("%Y-%m-%d %H:%M:%S")
+		return row
+
 	elif func == 'seconds_integer_value' :
 		row[n] = secondsToTime(row[n])
 		return row
-	elif func == 6 :
+	elif func == 'float4' or func == 'float8' :
 		try :
 			row[n] = '%.0f' % float(row[n])
 		except :
 			pass
 		return row
 
-def defineTransformJob(data) :
+def defineTransformJob(data,job) :
+	global TransformJob
 	os.system('clear')
 	print('Reading the file....')
 	time.sleep(1)
@@ -194,14 +222,21 @@ def defineTransformJob(data) :
 				if chkResult == 'Contain Character' or chkResult == 'Contain Special Character' :
 					choices = input("\nValue has non digit character, remove any non digit character and transform to integer? (y/n)\n")
 					if choices == 'y' :
-						TransformJob[i] = 1
+						TransformJob[i] = inputkv
 						break
 					else :
 						continue
 				elif chkResult == 'Contain Decimal Separator' :
 					print('\nValue contain decimal separator, suggesting float for variable type')
+					choices = input("\nRemove Decimal Separator and transform to integer? (y/n)\n")
+					if choices == 'y' :
+						TransformJob[i] = inputkv
+						break
+					else :
+						continue
 					continue
 				else :
+					TransformJob[i] = inputkv
 					break
 			elif inputkv in ['float4', 'float8'] :
 				excolumn = getSample(data, i)
@@ -211,13 +246,14 @@ def defineTransformJob(data) :
 				if chkResult == 'Contain Character' or chkResult == 'Contain Special Character' :
 					choices = input("\nValue has non digit character, remove any non digit character and transform to integer? (y/n)\n")
 					if choices == 'y' :
-						TransformJob[i] = 1
+						TransformJob[i] = inputkv
 						break
 					else :
 						continue
 				else :
+					TransformJob[i] = inputkv
 					break
-			elif inputkv == 'date' :
+			elif inputkv == 'date' and job == 'predict' :
 				print('\nProcessing date value... Figuring what kind date type it is...')
 				time.sleep(2)
 				print('\nSample value : ', data[1][i])
@@ -254,6 +290,12 @@ def defineTransformJob(data) :
 						time.sleep(1)
 						continue
 				TransformJob[i] = choices
+				break
+			elif inputkv == 'date' :
+				TransformJob[i] = inputkv
+				break
+			elif inputkv == 'd-Mon-y H.M' :
+				TransformJob[i] = inputkv
 				break
 			elif inputkv == 'timestamp' :
 				print('\nSample value : ', data[1][i])
@@ -432,6 +474,7 @@ def pushToDB_old(targethostname, targetdatabase, targetusername, targetpassword,
 				# cur.execute( "INSERT INTO ods.testing_aulia VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",row)
 				# cur.execute(query,row)
 				# conn.commit()
+			writeCSV(ar)
 			cur.executemany(query,ar)
 			conn.commit()
 			cur.close()
@@ -444,9 +487,10 @@ def pushToDB_old(targethostname, targetdatabase, targetusername, targetpassword,
 			conn.close()
 	return result, pushToDBError
 
-def pushToDB(targethostname, targetdatabase, targetusername, targetpassword, targetfile, data, TransformJob) :
+def pushToDB(targethostname, targetdatabase, targetusername, targetpassword, targetfile, data,query, TransformJob) :
 	pushToDBError = True
 	print("target file :", targetfile)
+	# print('here')
 	try :
 		conn = None
 		conn = psycopg2.connect(host=targethostname, database=targetdatabase, user= targetusername, password= targetpassword)
@@ -457,7 +501,10 @@ def pushToDB(targethostname, targetdatabase, targetusername, targetpassword, tar
 			for i in TransformJob :
 				row = transformJobList(i,TransformJob[i],row)
 			ar.append(row)
-			print(row)	
+			# print(row)	
+		# print(query)
+		# print('ar: ', ar)
+		# writeCSV(ar)
 		cur.executemany(query,ar)
 		conn.commit()
 		cur.close()
@@ -474,10 +521,9 @@ def readExcel(file) :
 	wb = xlrd.open_workbook(file) 
 	sheet = wb.sheet_by_index(0) 
 	sheet.cell_value(0, 0) 
-
-	row = []
 	data = []
 	for i in range(sheet.nrows):
+		row = []
 		for j in range(len(sheet.row_values(i))) :
 			try :
 				value = str(decimal.Decimal(float(sheet.row_values(i)[j])))
@@ -487,14 +533,25 @@ def readExcel(file) :
 		data.append(row) 
 	return data
 
-def openCSV(targetfile) :
-	while True :
-		delim = input('\nSelect delimiter (, or ; or |)\n')
-		if delim in [',',';','|']:
-			break
-		else:
-			print('\nPlease insert the right value\n')
-			continue
+def writeCSV(data) :
+	with open('Output.csv', 'w', newline='') as myfile:
+		wr = csv.writer(myfile, quoting=csv.QUOTE_ALL)
+		for row in data :
+			wr.writerow(row)
+
+def openCSV(targetfile, delim) :
+	global delimiter
+	if delim == '':
+		while True :
+			delim = input('\nSelect delimiter (, or ; or |)\n')
+			if delim in [',',';','|']:
+				break
+			else:
+				print('\nPlease insert the right value\n')
+				continue
+	else :
+		pass
+	delimiter = delim
 	file = csv.reader(open(targetfile, "r"), delimiter = delim)
 	data = []
 	for row in file :
@@ -581,6 +638,23 @@ def truncateTableQuery(tablename):
 	query = "TRUNCATE TABLE %s " % tablename
 	return query
 
+def dropTableQuery(tablename):
+	query = "DROP TABLE %s " % tablename
+	return query
+
+def insertQuery(tablename, data):
+	col,_,_ = readColumn(data)
+	query = "INSERT INTO %s VALUES (" % tablename
+	for i in range(len(col)) :
+		if i == len(col)-1 :
+			query = query + "%s);"
+		else :
+			query = query + "%s,"
+	# query = query + ");"
+	return query
+
+
+
 def queryTable(targethostname, targetdatabase, targetusername, targetpassword, targettable, query, queryname):
 	queryTableError = True
 	try :
@@ -614,16 +688,104 @@ def runSetConfiguration():
 	print('Done')
 	time.sleep(2)
 
+def createJobConfiguration(confName, transformJob, projectName):
+	# defineTargetDB(2)
+	try :
+		cnf = {}
+		cnf['targetConf'] = {}
+		cnf['sourceConf'] = {}
+		cnf['common'] = {}
+		cnf['transformJob'] = {}
+		cnf['targetConf']['targethostname'] = targethostname
+		cnf['targetConf']['targetdatabase'] = targetdatabase
+		cnf['targetConf']['targetusername'] = targetusername
+		cnf['targetConf']['targetpassword'] = targetpassword
+		cnf['targetConf']['targettable'] = targettable
+		cnf['sourceConf']['sourcehostname'] = sourcehostname
+		cnf['sourceConf']['sourceport'] = sourceport
+		cnf['sourceConf']['sourceusername'] = sourceusername
+		cnf['sourceConf']['sourcepassword'] = sourcepassword
+		cnf['sourceConf']['sourcelocation'] = sourcelocation
+		cnf['sourceConf']['sourcenamepatern'] = sourcenamepatern
+		cnf['common']['logfile'] = logfile
+		cnf['common']['userEmail'] = userEmail
+		cnf['common']['developerEmail'] = developerEmail
+		cnf['transformJob'] = transformJob
+		cnf['common']['projectName'] = projectName
+		cnf['common']['fileType'] = fileType
+		cnf['common']['delimiter'] = delimiter
+		with open(confName,'w+') as outfile :
+			json.dump(cnf,outfile)
+		print('Saving file...')
+		time.sleep(2)
+		print('Done')
+		time.sleep(1)
+		os.system('clear')
+		error = False
+		return error
+	except :
+		error = True
+		return error
+
 def readConfiguration():
 	global targethostname, targetdatabase, targetusername, targetpassword
-	confName = input('\nLoad Configuration file in: \n')
-	with open(confName) as json_file:
-	    cnf = json.load(json_file)
-	    targethostname = cnf['targethostname']
-	    targetdatabase = cnf['targetdatabase']
-	    targetusername = cnf['targetusername'] 
-	    targetpassword = cnf['targetpassword']
+	while  True :
+		confName = input('\nLoad Configuration file in: \n')
+		try :
+			with open(confName) as json_file:
+			    cnf = json.load(json_file)
+			    targethostname = cnf['targethostname']
+			    targetdatabase = cnf['targetdatabase']
+			    targetusername = cnf['targetusername'] 
+			    targetpassword = cnf['targetpassword']
+			break
+		except : 
+			print('failed to load the file, please check the filename or the configuration file content')
+			time.sleep(1)
+			continue
+	os.system('clear')
+	print('Load the configuration....\n')
+	print(targethostname)
+	print(targetdatabase)
+	print(targetusername)
+	time.sleep(2)
 	    # print(targethostname + '\n' + targetdatabase + '\n' + targetusername + '\n' + targetpassword + '\n')
+
+def readJobConfiguration(confName):
+	global targethostname, targetdatabase, targetusername, targetpassword, sourcehostname,sourceport,sourceusername,sourcepassword,sourcelocation,sourcenamepatern,logfile,transformJob_List,userEmail,developerEmail,projectName,fileType,delimiter
+	while  True :
+		try :
+			with open(confName) as json_file:
+			    cnf = json.load(json_file)
+			    targethostname = cnf['targetConf']['targethostname']
+			    targetdatabase = cnf['targetConf']['targetdatabase']
+			    targetusername = cnf['targetConf']['targetusername']
+			    targetpassword = cnf['targetConf']['targetpassword']
+
+			    sourcehostname = cnf['sourceConf']['sourcehostname']
+			    sourceport = cnf['sourceConf']['sourceport']			    
+			    sourceusername = cnf['sourceConf']['sourceusername'] 
+			    sourcepassword = cnf['sourceConf']['sourcepassword']
+			    sourcelocation = cnf['sourceConf']['sourcelocation']
+			    sourcenamepatern = cnf['sourceConf']['sourcenamepatern']
+
+			    projectName = cnf['common']['projectName']
+			    logfile = cnf['common']['logfile']
+			    transformJob = cnf['transformJob']
+			    userEmail = cnf['common']['userEmail']
+			    developerEmail = cnf['common']['developerEmail']
+			    fileType = cnf['common']['fileType']
+			    delimiter = cnf['common']['delimiter']
+			break
+		except : 
+			print('failed to load the file, please check either the file is exist')
+			continue
+	os.system('clear')
+	print('Load the configuration....\n')
+	print(targethostname)
+	print(targetdatabase)
+	print(targetusername)
+	time.sleep(2)
 
 def createTablefunc(data) :
 	column, example,_ = readColumn(data)
@@ -632,6 +794,17 @@ def createTablefunc(data) :
 	result, queryCreateTableError = queryTable(targethostname, targetdatabase, targetusername, targetpassword,targettable, query, 'Create table')
 	return result, queryCreateTableError
 
+def createProjectJob(projectName) :
+	a = "confName = ' " +projectName+".cnf'\n\n"
+	with open('job_general.py', 'r') as r :
+		job = r.read()
+	with open(projectName+'/'+projectName+'.py', 'a') as f :
+		f.write(a)
+		f.write(job)
+	with open(projectName+'/'+'oldlist', 'w') as oldlist :
+		oldlist.write('')
+	with open(projectName+'/'+projectName+'_log.log', 'w') as log :
+		log.write('')
 
 def runCreateNewTable():
 	print('\nPlease select the input data')
@@ -652,7 +825,26 @@ def runCreateNewTable():
 				continue
 
 	if selectedSource == 3 :
-		defineTargetDB(1)
+		print('\nConfigure target Database')
+		print('1: From configuration file')
+		print('2: Manual Configure')
+		while True :
+			try :
+				selectedConf = int(input('\ninput:\n'))
+			except:
+				print('Please only input the number\n')
+				continue
+			else:
+				if selectedConf == 1 :
+					readConfiguration()
+					defineTargetDB(3)
+					break
+				elif selectedConf == 2 :
+					defineTargetDB(1)
+					break
+				else :
+					print('Please insert the right value\n')
+				continue		
 		while True:
 			try :
 				collen = int(input('\nHow many column will be made\n'))
@@ -667,10 +859,29 @@ def runCreateNewTable():
 		print(result)
 
 	else :
-		defineTargetDB(1)
+		print('\nConfigure target Database')
+		print('1: From configuration file')
+		print('2: Manual Configure')
+		while True :
+			try :
+				selectedConf = int(input('\ninput:\n'))
+			except:
+				print('Please only input the number\n')
+				continue
+			else:
+				if selectedConf == 1 :
+					readConfiguration()
+					defineTargetDB(3)
+					break
+				elif selectedConf == 2 :
+					defineTargetDB(1)
+					break
+				else :
+					print('Please insert the right value\n')
+					continue
 		targetfile = input('\nInsert Path of targetfile:\n')
 		if selectedSource == 1 :
-			data = openCSV(targetfile)
+			data = openCSV(targetfile,'')
 		elif selectedSource == 2 :
 			data = readExcel(targetfile)
 		else : 
@@ -709,25 +920,105 @@ def runInsertTable():
 				print('\nPlease insert the right value(1 or 2)\n')
 				continue
 
-	defineTargetDB(1)
+	print('\nConfigure target Database')
+	print('1: From configuration file')
+	print('2: Manual Configure')
+	while True :
+		try :
+			selectedConf = int(input('\ninput:\n'))
+		except:
+			print('Please only input the number\n')
+			continue
+		else:
+			if selectedConf == 1 :
+				readConfiguration()
+				defineTargetDB(3)
+				break
+			elif selectedConf == 2 :
+				defineTargetDB(1)
+				break
+			else :
+				print('Please insert the right value\n')
+				continue
 	targetfile = input('\nInsert Path of targetfile:\n')
 	if selectedSource == 1 :	
-		data = openCSV(targetfile)			
+		data = openCSV(targetfile,'')			
 	elif selectedSource == 2 :
 		data = readExcel(targetfile)
 	else :
 		pass
+	TransformJob = defineTransformJob(data, 'predict')
+	print('\nTransformJob: ', TransformJob)
+	time.sleep(1)
+	queryCreateTableError = True
 	if selectedSubMenu == 2 :
 		result, queryCreateTableError = createTablefunc(data)
 		print(result)
 	else :
 		pass
-	TransformJob = defineTransformJob(data)
-	print('\nTransformJob: ', TransformJob)
-	result, error = pushToDB(targethostname, targetdatabase, targetusername, targetpassword, targetfile, data, TransformJob)
+	time.sleep(1)
+	result, error = pushToDB(targethostname, targetdatabase, targetusername, targetpassword, targetfile, data, insertQuery(targettable, data), TransformJob)
+	if error == True and queryCreateTableError == False :
+		query = queryTable(targethostname, targetdatabase, targetusername, targetpassword, targettable, dropTableQuery(targettable), 'DROP TABLE')
+		print(query)
 	print('\nResult: ', result)
 
 
+def createETLProject():
+	global projectName, fileType
+	os.system('clear')
+	projectName = input('\nProject name:\n')
+	defineTargetDB(1)
+	defineSource()
+	defineCommon()
+	print('\nPlease select the input data')
+	print('1: '+ SourceList[1])
+	print('2: '+ SourceList[2])
+	print('3: '+ SourceList[5])
+	while True :
+		try :
+			selectedSource = int(input('\ninput:\n'))
+		except:
+			print('Please only input the number\n')
+			continue
+		else:
+			if selectedSource in [1,2,3] :
+				break
+			else :
+				print('Please insert the right value\n')
+				continue
+	if selectedSource == 1 :
+		fileType = 'csv'
+		targetfile = input('\nPlease insert file name:\n')	
+		data = openCSV(targetfile,'')			
+	elif selectedSource == 2 :
+		fileType = 'xlsx'
+		targetfile = input('\nPlease insert file name:\n')	
+		data = readExcel(targetfile)
+	else :
+		pass
+	transformJob = defineTransformJob(data,'')
+	print('\nTransformJob: ', transformJob)
+	time.sleep(1)
+	while True :
+		if os.path.exists(projectName) == True :
+			projectName = input('\nProject name: '+ projectName +' is already exist, please insert different project name:\n')
+			continue
+		else :
+			break
+	os.mkdir(projectName)
+	with open("oldlist", "w") as file:
+		file.write('')
+	errorCreateCnf =  createJobConfiguration(projectName+'/'+projectName+'.cnf', TransformJob, projectName) # harusnya di akhir
+	if errorCreateCnf == True :
+		try :
+			os.rmdir(projectName)
+			print('Project Creation is failed...')
+		except :
+			pass
+	createProjectJob(projectName)
+	print('DONE...')
+	time.sleep(1)
 
 
 
@@ -767,6 +1058,8 @@ if __name__ == '__main__':
 		runSetConfiguration()
 	if selectedMenu == 6 :
 		readConfiguration()
+	if selectedMenu == 3 : 
+		createETLProject()
 
 
 
