@@ -13,7 +13,7 @@ import json
 import os
 import xlrd
 
-confName = './test_bulk_customer.cnf'
+# confName = './test_bulk_customer.cnf'
 today = date.today()
 sourcehostname = ""
 sourceusername = ""
@@ -31,6 +31,24 @@ query = ""
 logfile = ''
 transformJob = {}
 
+def excel_time_float(x):
+	x = int(float(x) * 24 * 3600) # convert to number of seconds
+	hour = "{:02d}".format(x//3600) 
+	minute = "{:02d}".format((x%3600)//60) 
+	seconds ="{:02d}".format(x%60)  
+	return str(str(hour) + ':' + str(minute) + ':' + str(seconds))
+
+def excel_date_float(value) :
+	value = float(value)
+	python_date = datetime(*xlrd.xldate_as_tuple(value, 0))
+	year = python_date.year
+	month = python_date.month
+	day = python_date.day
+	res =  str(str(year)+"-"+str(month)+"-"+str(day))
+	return res
+
+def secondsToTime(n): 
+    return str(timedelta(seconds = int(n)/10)) 
 
 def transformJobList(n,func,row):
 	if func == 'int4' or func == 'int8' :
@@ -72,6 +90,9 @@ def transformJobList(n,func,row):
 	elif func == 'yy/mm/dd':
 		row[n] = datetime.strptime(row[n], '%y/%m/%d').strftime("%Y-%m-%d")
 		return row
+	elif func == 'excel_date_float':
+		row[n] = excel_date_float(row[n])
+		return row
 	elif func == 'HH:MM:SS' :
 		return row
 	elif func == 'HH.MM.SS' :
@@ -79,6 +100,9 @@ def transformJobList(n,func,row):
 		return row
 	elif func == 'seconds_integer_value' :
 		row[n] = secondsToTime(row[n])
+		return row
+	elif func == 'excel_time_float':
+		row[n] = excel_time_float(row[n])
 		return row
 	elif func == 'float4' or func == 'float8' :
 		try :
@@ -197,21 +221,32 @@ def pushToDBJob(targethostname, targetdatabase, targetusername, targetpassword, 
 
 def pushToDB(targethostname, targetdatabase, targetusername, targetpassword, targetfile, data,query, TransformJob) :
 	pushToDBError = True
-	print("target file :", targetfile)
+	# print("target file :", targetfile)
+	print("query: ", query)
+	print("\n"+targethostname,targetdatabase,targetusername,targetpassword)
 	try :
 		conn = None
 		conn = psycopg2.connect(host=targethostname, database=targetdatabase, user= targetusername, password= targetpassword)
 		cur = conn.cursor()
-		data.pop(0)
-		ar = []
-		for row in data :
-			for i in TransformJob :
-				row = transformJobList(int(i),TransformJob[i],row)
-			ar.append(row)
-			# print(row)	
+
+		# data.pop(0)
+		# ar = []
+		# try :
+		# 	for row in data :
+		# 		print("\n",row)
+		# 		for i in TransformJob :
+		# 			print("\n",int(i),TransformJob[i],row)
+		# 			row = transformJobList(int(i),TransformJob[i],row)
+		# 			print("\nRES : ", row)
+		# 		ar.append(row)
+		# 		# print(row)	
+		# except :
+		# 	result =  "- transformation is failed \n"
+		# 	print(result)
 		# print(query)
 		# print(ar)
-		cur.executemany(query,ar)
+		# cur.executemany(query,ar)
+		cur.executemany(query,data)
 		conn.commit()
 		cur.close()
 		pushToDBError = False
@@ -247,7 +282,9 @@ def queryTable(targethostname, targetdatabase, targetusername, targetpassword, t
 
 def defineDateType(date):
 	#['ddmmYYYY' , 'ddmmyy' , 'YYYYmmdd' , 'yymmdd' , 'dd-mm-YYYY', 'dd-mm-yy', 'YYYY-mm-dd' , 'yy-mm-dd' , 'dd/mm/YYYY' , 'dd/mm/yy' , 'YYYY/mm/dd' , 'yy/mm/dd'] 
-	if len(date) == 8 and date[5].isdigit() and (0<int(date[0]+date[1])<32) and (0<int(date[2]+date[3])<13) and date[4] in ['1','2'] and date[5] in ['9','0'] :
+	if len(date) == 5 :
+		return 'excel_date_float'
+	elif len(date) == 8 and date[5].isdigit() and (0<int(date[0]+date[1])<32) and (0<int(date[2]+date[3])<13) and date[4] in ['1','2'] and date[5] in ['9','0'] :
 		return 'ddmmYYYY'
 	elif len(date) == 6 and (0<int(date[0]+date[1])<32) and (0<int(date[2]+date[3])<13) and date[4] in ['8','9','0'] :
 		return 'special case'
@@ -441,7 +478,7 @@ if __name__ == '__main__':
 						pass
 					data_piece.pop(0) 
 					for i in transformJob :
-						if transformJob[i] == 'date' : #predict date
+						if transformJob[i] == 'date' or transformJob[i] == 'dd/mm/YYYY' or transformJob[i] == 'excel_date_float' : #predict date
 							try :
 								transformJob[i] =  defineDateType(data_piece[1][int(i)])
 								if transformJob[i]== 'special case' :
@@ -453,19 +490,22 @@ if __name__ == '__main__':
 								logging("\nlog -" + datetime.now().strftime("%d/%m/%Y %H:%M:%S") + " -- " + targetfile + " -- " + "Failed to predict date type", l)
 						else : 
 							pass
-					# try :				
-					# 	for row in data_piece : # do transformation
-					# 		print(transformJob)
-					# 		for i in transformJob :
-					# 			row = transformJobList(i,transformJob[i],row)
-					# 		data.append(row) # append all row from all files to one variable
-					# except : 
-					# 	logging("\nlog -" + datetime.now().strftime("%d/%m/%Y %H:%M:%S") + " -- " + targetfile + " -- " + "Failed to transform the data", l)
-					for row in data_piece : # append all row from all files to one variable
-						data.append(row)
+					try :
+						# print(transformJob)
+						# print(data_piece[1])
+						# time.sleep(0.5)
+						for row in data_piece : # do transformation
+							for i in transformJob :
+								row = transformJobList(int(i),transformJob[i],row)
+							data.append(row) # append all row from all files to one variable
+							# logging("\nlog -" + datetime.now().strftime("%d/%m/%Y %H:%M:%S") + " -- " + targetfile + " -- " + "Transformation is succsess", l)
+					except : 
+						logging("\nlog -" + datetime.now().strftime("%d/%m/%Y %H:%M:%S") + " -- " + targetfile + " -- " + "Failed to transform the data", l)
+					# for row in data_piece : # append all row from all files to one variable
+					# 	data.append(row)
 				else :
 					pass # file type is wrong
-			# print(data)
+			print(data)
 			time.sleep(5)
 			print("\nPushing to DB....")
 			resultpushToDB, pushToDBError = pushToDB(targethostname, targetdatabase, targetusername, targetpassword, targetfile, data,insertQuery(targettable, data), transformJob) # push to data warehouse
@@ -488,4 +528,4 @@ if __name__ == '__main__':
 			print("\n\nNo new file uploaded")
 		print("sleeping....")
 		l.close()
-		time.sleep(15)
+		time.sleep(10800)
